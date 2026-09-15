@@ -1,0 +1,7 @@
+node_modules/
+dist/
+src/themes/_embedded-assets.ts
+*.tgz
+
+.env
+.vscode

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stella Sora Cursor Demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { min-height: 100vh; background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; text-align: center; }
+    .btn { padding: 12px 24px; border: none; border-radius: 8px; background: rgba(255,255,255,0.1); color: #fff; margin: 8px; cursor: pointer; font-size: 1rem; }
+    .btn:hover { background: rgba(255,255,255,0.2); }
+  </style>
+</head>
+<body>
+  <div>
+    <h1>Stella Sora Cursor</h1>
+    <p style="color:#aaa;margin:1rem 0 2rem;">点击 / 长按 / 拖动鼠标查看效果</p>
+    <button class="btn" onclick="switchTo('default')">Default 主题</button>
+    <button class="btn" onclick="switchTo('christmas')">Christmas 主题</button>
+    <button class="btn" onclick="switchTo('new-year')">New Year 主题</button>
+    <button class="btn" onclick="switchTo('summer')">Summer 主题</button>
+    <button class="btn" onclick="switchTo('random')">随机主题</button>
+    <button class="btn" onclick="switchTo('auto')">自动(按日期)</button>
+  </div>
+
+  <script type="module">
+    import { initStellaSoraCursor } from '../dist/index.esm.js';
+
+    let cursor = null;
+    async function init(theme) {
+      cursor?.destroy();
+      cursor = await initStellaSoraCursor(
+        theme === 'auto' ? {} : { theme }
+      );
+      console.log('Initialized:', theme);
+    }
+
+    window.switchTo = init;
+    init('random');
+  </script>
+</body>
+</html>
