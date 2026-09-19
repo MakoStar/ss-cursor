@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <title>TouchEffect Preview</title>
+  <style>
+    html,
+    html * {
+      cursor: url("assets/cursor.png") 0 0, auto !important;
+    }
+
+    html a,
+    html button,
+    html [role="button"],
+    html input[type="button"],
+    html input[type="submit"],
+    html select,
+    html label {
+      cursor: url("assets/cursor-pointer.png") 0 0, pointer !important;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #0a0a14;
+    }
+
+    canvas {
+      display: block;
+      position: absolute;
+      inset: 0;
+    }
+
+    #tip {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #455;
+      font: 13px/1.4 system-ui, sans-serif;
+      letter-spacing: 3px;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #stats {
+      position: fixed;
+      top: 12px;
+      left: 14px;
+      color: #3a4a55;
+      font: 11px/1.4 ui-monospace, monospace;
+      pointer-events: none;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #667;
+      font: 14px system-ui;
+      background: #0a0a14;
+      transition: opacity .4s;
+      z-index: 10;
+    }
+
+    #loading.done {
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="c"></canvas>
+  <div id="tip">点击 / 拖动屏幕预览特效</div>
+  <div id="stats"></div>
+  <div id="loading">加载贴图…</div>
+
+  <script>
+    /** 圆周率两倍 */
+    const TAU = Math.PI * 2;
+    /** 区间随机 */
+    const rand = (a, b) => a + Math.random() * (b - a);
+    /** 点击爆裂的整体缩放，不影响拖动拖尾 */
+    const GLOBAL_SCALE = 5.0;
+
+    /** 贴图资源表 */
+    const SPRITES = {};
+
+    /** 异步加载单张贴图 */
+    function loadImage(name) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve([name, img]);
+        img.onerror = () => reject(new Error('加载失败: ' + name));
+        img.src = name;
+      });
+    }
+
+    /** 贴图文件路径表 */
+    const TEX_FILES = {
+      /** 彩虹环 */
+      ring1: './assets/ring1.png',
+      /** 白色环 */
+      ring2: './assets/ring2.png',
+      /** 中心四角星 */
+      star: './assets/star.png',
+      /** 备用星星一 */
+      spark1: './assets/fx_light_cross_2.png',
+      /** 飞散星星 */
+      spark2: './assets/fx_light_cross_3.png',
+    };
+
+    /** 批量加载所有贴图 */
+    async function loadAllSprites() {
+      const entries = await Promise.all(
+        Object.entries(TEX_FILES).map(([key, file]) =>
+          loadImage(file).then(([_, img]) => [key, img])
+        )
+      );
+      for (const [key, img] of entries) SPRITES[key] = img;
+      for (const key of ['spark1', 'spark2']) {
+        const img = SPRITES[key];
+        SPRITES[key + '_frames'] = (img.width / img.height > 1.5) ? 2 : 1;
+      }
+    }
+
+    /** 染色缓存 */
+    const _tintCache = new Map();
+
+    /** 颜色量化以减少缓存条目 */
+    function quantizeColor(color) {
+      const m = color.match(/rgba?\(([^)]+)\)/);
+      if (!m) return color;
+      const p = m[1].split(',').map(s => parseFloat(s.trim()));
+      const r = Math.round(p[0] / 16) * 16;
+      const g = Math.round(p[1] / 16) * 16;
+      const b = Math.round(p[2] / 16) * 16;
+      const a = p[3] !== undefined ? Math.round(p[3] * 8) / 8 : 1;
+      return `rgba(${r},${g},${b},${a})`;
+    }
+
+    /** 把白色贴图染成指定颜色并缓存 */
+    function getTinted(sprite, color) {
+      const q = quantizeColor(color);
+      const key = sprite.src + '|' + q;
+      if (_tintCache.has(key)) return _tintCache.get(key);
+      try {
+        const c = document.createElement('canvas');
+        c.width = sprite.width;
+        c.height = sprite.height;
+        const g = c.getContext('2d');
+        g.drawImage(sprite, 0, 0);
+        g.globalCompositeOperation = 'source-in';
+        g.fillStyle = q;
+        g.fillRect(0, 0, c.width, c.height);
+        _tintCache.set(key, c);
+        return c;
+      } catch (e) { return null; }
+    }
+
+    /** 点击爆裂发射器 */
+    class Emitter {
+      constructor(cfg) {
+        Object.assign(this, cfg);
+        this.particles = [];
+        this.elapsed = 0;
+        this.hasEmitted = false;
+        this._glowLayers = null;
+      }
+      /** 更新粒子 */
+      update(dt) {
+        this.elapsed += dt;
+        if (!this.hasEmitted && this.elapsed >= (this.startDelay || 0)) {
+          this.hasEmitted = true;
+          this._burst();
+        }
+        const ps = this.particles;
+        for (let i = ps.length - 1; i >= 0; i--) {
+          const p = ps[i];
+          p.age += dt;
+          if (p.age >= p.life) { ps.splice(i, 1); continue; }
+          if (p.drag > 0) { const d = Math.exp(-p.drag * dt); p.vx *= d; p.vy *= d; }
+          p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.rotSpeed * dt;
+        }
+      }
+      /** 一次性爆发所有粒子 */
+      _burst() {
+        const n = this.burstCount;
+        for (let i = 0; i < n; i++) {
+          const life = rand(this.lifeMin, this.lifeMax);
+          const speed = rand(this.speedMin, this.speedMax) * GLOBAL_SCALE;
+          const size = rand(this.sizeMin, this.sizeMax) * GLOBAL_SCALE;
+          const angle = Math.random() * TAU;
+          const radius = this.shapeRadius
+            ? this.shapeRadius * Math.sqrt(Math.random()) * GLOBAL_SCALE : 0;
+          const vx = Math.cos(angle) * speed;
+          const vy = Math.sin(angle) * speed;
+          this.particles.push({
+            x: Math.cos(angle) * radius, y: Math.sin(angle) * radius,
+            vx, vy, age: 0, life, startSize: size,
+            rot: (this.rotMin !== undefined) ? rand(this.rotMin, this.rotMax) : 0,
+            rotSpeed: this.rotSpeed ? rand(-this.rotSpeed, this.rotSpeed) : 0,
+            drag: this.drag || 0,
+            frameOffset: Math.random(),
+            paletteIndex: this._glowLayers
+              ? Math.floor(Math.random() * this._glowLayers.length) : 0,
+          });
+        }
+      }
+      /** 预渲染染色辉光层 */
+      _buildGlowLayers() {
+        if (!this.glow || this._glowLayers) return;
+        const palettes = this.glow.palettes || [this.glow.layers || []];
+        const sprite = this.sprite;
+        this._glowLayers = palettes.map(layers =>
+          layers.map(l => {
+            const c = document.createElement('canvas');
+            c.width = sprite.width; c.height = sprite.height;
+            const gctx = c.getContext('2d');
+            gctx.drawImage(sprite, 0, 0);
+            gctx.globalCompositeOperation = 'source-in';
+            gctx.fillStyle = l.color;
+            gctx.fillRect(0, 0, c.width, c.height);
+            return {
+              canvas: c, blur: l.blur || 1, scale: l.scale || 1.15,
+              alpha: l.alpha !== undefined ? l.alpha : 1
+            };
+          })
+        );
+      }
+      /** 绘制粒子 */
+      draw(ctx) {
+        if (this.glow && (this.glow.layers || this.glow.palettes) && !this._glowLayers) {
+          this._buildGlowLayers();
+        }
+        const sprite = this.sprite;
+        const frames = this.frameCount || 1;
+        const fw = sprite.width / frames;
+        const fh = sprite.height;
+        const ps = this.particles;
+        const useShadowGlow = this.glow
+          && this.glow.blur !== undefined
+          && !this.glow.layers && !this.glow.palettes;
+        if (useShadowGlow) {
+          ctx.shadowBlur = this.glow.blur * GLOBAL_SCALE;
+          ctx.shadowColor = this.glow.color || 'rgba(0, 255, 255, 0.8)';
+        }
+        for (let i = 0; i < ps.length; i++) {
+          const p = ps[i];
+          const t = p.age / p.life;
+          const size = p.startSize * this.sizeCurve(t);
+          const alpha = this.alphaCurve(t);
+          if (alpha < 0.01 || size < 0.5) continue;
+          let frame = 0;
+          if (frames > 1) {
+            const cycle = (t * 1.5 + p.frameOffset) % 1;
+            frame = Math.min(frames - 1, Math.floor(cycle * frames));
+          }
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.translate(p.x, p.y);
+          if (p.rot) ctx.rotate(p.rot);
+          if (this._glowLayers) {
+            const layers = this._glowLayers[p.paletteIndex] || this._glowLayers[0];
+            if (layers && layers.length) {
+              for (let g = 0; g < layers.length; g++) {
+                const gl = layers[g];
+                const gSize = size * gl.scale;
+                ctx.save();
+                ctx.filter = `blur(${gl.blur * GLOBAL_SCALE}px)`;
+                ctx.globalAlpha = alpha * gl.alpha;
+                ctx.drawImage(gl.canvas, frame * fw, 0, fw, fh,
+                  -gSize / 2, -gSize / 2, gSize, gSize);
+                ctx.restore();
+              }
+            }
+          }
+          ctx.globalAlpha = alpha;
+          ctx.drawImage(sprite, frame * fw, 0, fw, fh,
+            -size / 2, -size / 2, size, size);
+          ctx.restore();
+        }
+        if (useShadowGlow) {
+          ctx.shadowBlur = 0;
+          ctx.shadowColor = 'transparent';
+        }
+      }
+      /** 是否完成 */
+      get done() { return this.hasEmitted && this.particles.length === 0; }
+    }
+
+    /** 拖动拖尾，含颜色拖尾与星星两层，尺寸固定不受全局缩放影响 */
+    class SlideTrail {
+      constructor(cfg = {}) {
+        this.points = [];
+        /** 星星淡出起点比例 */
+        this.starFadeStart = cfg.starFadeStart ?? 0.30;
+        /** 星星淡出终点比例 */
+        this.starFadeEnd = cfg.starFadeEnd ?? 0.50;
+        /** 星星满亮时的透明度 */
+        this.starBaseAlpha = cfg.starBaseAlpha ?? 0.85;
+        /** 拖尾路径点在屏幕上存活时长，越大颜色拖尾越长 */
+        this.pointLife = cfg.pointLife ?? 0.35;
+        /** 路径点最大数量 */
+        this.maxPoints = cfg.maxPoints ?? 240;
+        /** 采样点最小间距，避免堆积 */
+        this.minDist = cfg.minDist ?? 2.5;
+
+        /** 颜色拖尾头端宽度 */
+        this.ribbonWidth = cfg.ribbonWidth ?? 5.0;
+        /** 颜色拖尾整体透明度 */
+        this.ribbonAlpha = cfg.ribbonAlpha ?? 0.55;
+        /** 颜色拖尾整体亮度倍数 */
+        this.ribbonBright = cfg.ribbonBright ?? 0.85;
+        /** 颜色拖尾多层结构，每层含宽度倍数、透明度、模糊 */
+        this.ribbonLayers = cfg.ribbonLayers || [
+          { widthMul: 3.2, alpha: 0.30, blur: 8 },
+          { widthMul: 1.5, alpha: 0.60, blur: 2 },
+          { widthMul: 0.7, alpha: 1.00, blur: 0 },
+        ];
+        /** 颜色拖尾渐变色，t 为从头到尾的比例 */
+        this.ribbonColors = cfg.ribbonColors || [
+          { t: 0.00, color: 'rgba(180, 140, 255, 0.00)' },
+          { t: 0.10, color: 'rgba(200, 160, 255, 0.30)' },
+          { t: 0.30, color: 'rgba(230, 150, 255, 0.70)' },
+          { t: 0.55, color: 'rgba(255, 130, 240, 0.95)' },
+          { t: 0.78, color: 'rgba(255, 180, 220, 1.00)' },
+          { t: 0.92, color: 'rgba(255, 230, 180, 1.00)' },
+          { t: 1.00, color: 'rgba(255, 250, 220, 1.00)' },
+        ];
+
+        this.stars = [];
+        /** 星星最短寿命 */
+        this.starLifeMin = cfg.starLifeMin ?? 0.5;
+        /** 星星最长寿命 */
+        this.starLifeMax = cfg.starLifeMax ?? 0.6;
+        /** 按住不动时每秒撒星星的间隔 */
+        this.starInterval = cfg.starInterval ?? 0.05;
+        /** 移动时相邻星星的像素间距，越小越密 */
+        this.starSpacing = cfg.starSpacing ?? 30;
+        this.lastEmitPos = null;
+        this.timeAccum = 0;
+        /** 星星最小尺寸 */
+        this.starSizeMin = cfg.starSizeMin ?? 40;
+        /** 星星最大尺寸 */
+        this.starSizeMax = cfg.starSizeMax ?? 60;
+        /** 星星初速度下限 */
+        this.starSpeedMin = cfg.starSpeedMin ?? 0;
+        /** 星星初速度上限，越大越飘 */
+        this.starSpeedMax = cfg.starSpeedMax ?? 2;
+        /** 星星速度阻尼，越大越快停下 */
+        this.starDrag = cfg.starDrag ?? 6;
+        /** 星星可选颜色池 */
+        this.starColors = cfg.starColors || [
+          'rgba(93, 150, 254, 1.0)',
+          'rgba(76, 240, 203, 1.0)',
+          'rgba(160, 235, 100, 1.0)',
+          'rgba(230, 240, 160, 1.0)',
+          'rgba(255, 170, 220, 1.0)',
+        ];
+        /** 星星贴图 */
+        this.sprite = cfg.sprite;
+        /** 星星贴图帧数 */
+        this.spriteFrames = cfg.spriteFrames || 1;
+
+        this.lastPos = null;
+        this.isPressed = false;
+        this.starTimer = 0;
+        this.done = false;
+      }
+
+      /** 推入路径点 */
+      push(x, y) {
+        const pts = this.points;
+        if (pts.length > 0) {
+          const last = pts[pts.length - 1];
+          const dx = x - last.x, dy = y - last.y;
+          if (dx * dx + dy * dy < this.minDist * this.minDist) return;
+        }
+        pts.push({ x, y, age: 0 });
+        while (pts.length > this.maxPoints) pts.shift();
+        this.lastPos = { x, y };
+      }
+
+      /** 按下开始记录 */
+      start(x, y) {
+        this.isPressed = true;
+        this.lastPos = { x, y };
+        this.lastEmitPos = { x, y };
+        this.timeAccum = 0;
+        this.push(x, y);
+      }
+
+      /** 松开停止撒星星 */
+      end() { this.isPressed = false; }
+
+      /** 更新路径点与星星 */
+      update(dt) {
+        const pts = this.points;
+        for (let i = pts.length - 1; i >= 0; i--) {
+          pts[i].age += dt;
+          if (pts[i].age >= this.pointLife) pts.splice(i, 1);
+        }
+
+        if (this.isPressed && this.lastPos) {
+          const dist = this.lastEmitPos
+            ? Math.hypot(this.lastPos.x - this.lastEmitPos.x,
+              this.lastPos.y - this.lastEmitPos.y)
+            : Infinity;
+
+          if (dist >= this.starSpacing) {
+            const steps = Math.floor(dist / this.starSpacing);
+            const dx = this.lastPos.x - this.lastEmitPos.x;
+            const dy = this.lastPos.y - this.lastEmitPos.y;
+            for (let i = 1; i <= steps; i++) {
+              const t = i / steps;
+              this._spawnStar(this.lastEmitPos.x + dx * t,
+                this.lastEmitPos.y + dy * t);
+            }
+            const finalT = steps * this.starSpacing / dist;
+            this.lastEmitPos = {
+              x: this.lastEmitPos.x + dx * finalT,
+              y: this.lastEmitPos.y + dy * finalT,
+            };
+            this.timeAccum = 0;
+          } else {
+            this.timeAccum += dt;
+            while (this.timeAccum >= this.starInterval) {
+              this.timeAccum -= this.starInterval;
+              this._spawnStar(this.lastPos.x, this.lastPos.y);
+              this.lastEmitPos = { x: this.lastPos.x, y: this.lastPos.y };
+            }
+          }
+        } else {
+          this.timeAccum = 0;
+        }
+
+        for (let i = this.stars.length - 1; i >= 0; i--) {
+          const s = this.stars[i];
+          s.age += dt;
+          if (s.age >= s.life) { this.stars.splice(i, 1); continue; }
+          if (s.vx || s.vy) {
+            const d = Math.exp(-this.starDrag * dt);
+            s.vx *= d; s.vy *= d;
+            s.x += s.vx * dt;
+            s.y += s.vy * dt;
+          }
+          s.rot += s.rotSpeed * dt;
+        }
+
+        this.done = !this.isPressed && pts.length === 0 && this.stars.length === 0;
+        return !this.done;
+      }
+
+      /** 生成一颗星星 */
+      _spawnStar(x, y) {
+        const color = this.starColors[Math.floor(Math.random() * this.starColors.length)];
+        const speed = rand(this.starSpeedMin, this.starSpeedMax);
+        const ang = Math.random() * TAU;
+        this.stars.push({
+          x: x + rand(-3, 3),
+          y: y + rand(-3, 3),
+          vx: Math.cos(ang) * speed,
+          vy: Math.sin(ang) * speed,
+          age: 0,
+          life: rand(this.starLifeMin, this.starLifeMax),
+          size: rand(this.starSizeMin, this.starSizeMax),
+          color,
+          rot: Math.random() * TAU,
+          rotSpeed: rand(-1.5, 1.5),
+          frameOffset: Math.random(),
+        });
+      }
+
+      /** 按生命进度计算星星透明度 */
+      _starAlpha(t) {
+        const s = this.starFadeStart;
+        const e = this.starFadeEnd;
+        if (t < s) return this.starBaseAlpha;
+        if (t < e) return this.starBaseAlpha * (1 - (t - s) / (e - s));
+        return 0;
+      }
+
+      /** 绘制星星层 */
+      _drawStars(ctx) {
+        if (!this.sprite || this.stars.length === 0) return;
+        const sprite = this.sprite;
+        const frames = this.spriteFrames;
+        const fw = sprite.width / frames;
+        const fh = sprite.height;
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+
+        for (let i = 0; i < this.stars.length; i++) {
+          const s = this.stars[i];
+          const t = s.age / s.life;
+          const alpha = this._starAlpha(t);
+          if (alpha < 0.01) continue;
+
+          const sizeMul = 0.9 * (1 - t * 0.85);
+          const size = s.size * sizeMul;
+          if (size < 0.5) continue;
+
+          const tinted = getTinted(sprite, s.color);
+          if (!tinted) continue;
+
+          const frame = frames > 1
+            ? Math.floor(((s.frameOffset + t * 1.2) % 1) * frames)
+            : 0;
+
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.translate(s.x, s.y);
+          if (s.rot) ctx.rotate(s.rot);
+          ctx.drawImage(tinted,
+            frame * fw, 0, fw, fh,
+            -size / 2, -size / 2, size, size);
+          ctx.restore();
+        }
+        ctx.restore();
+      }
+
+      /** 绘制颜色拖尾 */
+      _drawRibbon(ctx) {
+        const pts = this.points;
+        if (pts.length < 2) return;
+
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalCompositeOperation = 'lighter';
+
+        for (let L = 0; L < this.ribbonLayers.length; L++) {
+          const { widthMul, alpha, blur } = this.ribbonLayers[L];
+          ctx.filter = blur > 0 ? `blur(${blur}px)` : 'none';
+          ctx.globalAlpha = alpha * this.ribbonAlpha * this.ribbonBright;
+
+          for (let k = 1; k < pts.length; k++) {
+            const a = pts[k - 1], b = pts[k];
+            const fresh = 1 - (b.age / this.pointLife);
+            if (fresh <= 0.05) continue;
+
+            const col = this._colorAt(fresh, this.ribbonColors);
+            const w = this.ribbonWidth * widthMul * Math.pow(fresh, 1.6);
+            if (w < 0.6) continue;
+
+            ctx.strokeStyle = col;
+            ctx.lineWidth = w;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+          }
+        }
+        ctx.filter = 'none';
+        ctx.restore();
+      }
+
+      /** 按比例取渐变色 */
+      _colorAt(t, colors) {
+        if (t <= colors[0].t) return colors[0].color;
+        if (t >= colors[colors.length - 1].t) return colors[colors.length - 1].color;
+        for (let i = 0; i < colors.length - 1; i++) {
+          const c0 = colors[i], c1 = colors[i + 1];
+          if (t >= c0.t && t <= c1.t) {
+            const lt = (t - c0.t) / (c1.t - c0.t);
+            return this._lerp(c0.color, c1.color, lt);
+          }
+        }
+        return colors[colors.length - 1].color;
+      }
+
+      /** 两色线性插值 */
+      _lerp(c0, c1, t) {
+        const p0 = this._parse(c0), p1 = this._parse(c1);
+        if (!p0 || !p1) return c0;
+        const r = Math.round(p0.r + (p1.r - p0.r) * t);
+        const g = Math.round(p0.g + (p1.g - p0.g) * t);
+        const b = Math.round(p0.b + (p1.b - p0.b) * t);
+        const a = p0.a + (p1.a - p0.a) * t;
+        return `rgba(${r},${g},${b},${a})`;
+      }
+
+      /** 解析 rgba 字符串 */
+      _parse(str) {
+        const m = str.match(/rgba?\(([^)]+)\)/);
+        if (!m) return null;
+        const p = m[1].split(',').map(s => parseFloat(s.trim()));
+        return { r: p[0], g: p[1], b: p[2], a: p[3] !== undefined ? p[3] : 1 };
+      }
+
+      /** 绘制完整拖尾 */
+      draw(ctx) {
+        this._drawStars(ctx);
+        this._drawRibbon(ctx);
+      }
+    }
+
+    /** 构建点击爆裂的所有发射器 */
+    function createEffectEmitters() {
+      const out = [];
+
+      /** 白环带青绿辉光，最先出现 */
+      out.push(new Emitter({
+        sprite: SPRITES.ring2, frameCount: 1, startDelay: 0.02,
+        lifeMin: 0.15, lifeMax: 0.15,
+        speedMin: 0, speedMax: 0, sizeMin: 20, sizeMax: 20, burstCount: 1,
+        glow: { blur: 1.5, color: 'rgba(0, 255, 255, 0.85)' },
+        sizeCurve: t => 1 - t * 0.4,
+        alphaCurve: t => {
+          if (t < 0.20) return t / 0.20;
+          if (t < 0.55) return 1;
+          return 1 - (t - 0.55) / 0.45;
+        },
+      }));
+
+      /** 彩虹环，白环之后淡入 */
+      out.push(new Emitter({
+        sprite: SPRITES.ring1, frameCount: 1, startDelay: 0.1,
+        lifeMin: 0.35, lifeMax: 0.35,
+        speedMin: 0, speedMax: 0, sizeMin: 22, sizeMax: 22, burstCount: 1,
+        rotMin: 0, rotMax: 8.03,
+        sizeCurve: t => 1 - Math.pow(1 - t, 2),
+        alphaCurve: t => {
+          if (t < 0.20) return t / 0.20;
+          if (t < 0.55) return 1;
+          return 1 - (t - 0.55) / 0.45;
+        },
+      }));
+
+      /** 中心四角星 */
+      out.push(new Emitter({
+        sprite: SPRITES.star, frameCount: 1, startDelay: 0.03,
+        lifeMin: 0.25, lifeMax: 0.25,
+        speedMin: 0, speedMax: 0, sizeMin: 27, sizeMax: 27, burstCount: 1,
+        sizeCurve: t => {
+          if (t < 0.05) return 0.91;
+          if (t < 0.112) return 0.91 - (t - 0.05) / 0.062 * 0.485;
+          return 0.425 * (1 - (t - 0.112) / 0.888);
+        },
+        alphaCurve: t => {
+          if (t < 0.192) return t / 0.192;
+          if (t < 0.770) return 1 - (t - 0.192) / 0.578 * 0.1;
+          return 0.9 * (1 - (t - 0.77) / 0.23);
+        },
+      }));
+
+      /** 四散飞出的星星，带多层彩色光晕 */
+      out.push(new Emitter({
+        sprite: SPRITES.spark2, frameCount: SPRITES.spark2_frames,
+        startDelay: 0.22,
+        lifeMin: 0.30, lifeMax: 0.75,
+        speedMin: 25, speedMax: 50,
+        sizeMin: 14, sizeMax: 22, burstCount: 5,
+        shapeRadius: 5, drag: 3, rotMin: 0, rotMax: 0,
+        glow: {
+          palettes: [
+            [
+              { blur: 0.6, scale: 0.8, color: 'rgba(100, 255, 180, 1.0)', alpha: 1.0 },
+              { blur: 0.4, scale: 0.4, color: 'rgba(180, 255, 210, 0.9)', alpha: 0.9 },
+              { blur: 0.2, scale: 0.2, color: 'rgba(255, 255, 255, 0.6)', alpha: 0.7 },
+            ],
+            [
+              { blur: 0.6, scale: 0.8, color: 'rgba(60, 180, 255, 1.0)', alpha: 1.0 },
+              { blur: 0.4, scale: 0.4, color: 'rgba(120, 210, 255, 0.9)', alpha: 0.9 },
+              { blur: 0.2, scale: 0.2, color: 'rgba(255, 255, 255, 0.6)', alpha: 0.7 },
+            ],
+          ]
+        },
+        sizeCurve: t => {
+          if (t < 0.250) return 0.98 - t * 2.17;
+          if (t < 0.525) return 0.44 + (t - 0.250) / 0.275 * 0.42;
+          if (t < 0.702) return 0.86 - (t - 0.525) / 0.177 * 0.35;
+          if (t < 0.812) return 0.51 + (t - 0.702) / 0.110 * 0.07;
+          return 0.58 - (t - 0.812) / 0.188 * 0.31;
+        },
+        alphaCurve: t => {
+          if (t < 0.27) return 1 - t * 1.30;
+          if (t < 0.44) return 0.65 + (t - 0.27) / 0.17 * 0.13;
+          if (t < 0.59) return 0.78 - (t - 0.44) / 0.15 * 0.15;
+          if (t < 0.75) return 0.63 - (t - 0.59) / 0.16 * 0.23;
+          return 0.4 * (1 - (t - 0.75) / 0.25);
+        },
+      }));
+
+      return out;
+    }
+
+    /** 一次点击产生的完整爆裂 */
+    class TouchEffect {
+      constructor(x, y) { this.x = x; this.y = y; this.emitters = createEffectEmitters(); }
+      /** 更新所有发射器 */
+      update(dt) {
+        let alive = false;
+        for (const e of this.emitters) { e.update(dt); if (!e.done) alive = true; }
+        return alive;
+      }
+      /** 绘制所有发射器 */
+      draw(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.globalCompositeOperation = 'lighter';
+        for (const e of this.emitters) e.draw(ctx);
+        ctx.restore();
+      }
+    }
+
+    /** 入口 */
+    (async function main() {
+      const canvas = document.getElementById('c');
+      const ctx = canvas.getContext('2d');
+      const statsEl = document.getElementById('stats');
+      const loadEl = document.getElementById('loading');
+
+      let W = 0, H = 0, DPR = 1;
+      /** 视口自适应 */
+      function resize() {
+        DPR = Math.min(window.devicePixelRatio || 1, 2);
+        W = window.innerWidth; H = window.innerHeight;
+        canvas.width = W * DPR; canvas.height = H * DPR;
+        canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      try { await loadAllSprites(); }
+      catch (e) { loadEl.textContent = '贴图加载失败：' + e.message; return; }
+      loadEl.classList.add('done');
+
+      const effects = [];
+      const slideTrails = [];
+      let activeTrail = null;
+      let lastT = performance.now();
+
+      /** 主循环 */
+      function loop(now) {
+        const dt = Math.min((now - lastT) / 1000, 0.05);
+        lastT = now;
+
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = '#0a0a14';
+        ctx.fillRect(0, 0, W, H);
+
+        for (let i = effects.length - 1; i >= 0; i--) {
+          const alive = effects[i].update(dt);
+          effects[i].draw(ctx);
+          if (!alive) effects.splice(i, 1);
+        }
+
+        for (let i = slideTrails.length - 1; i >= 0; i--) {
+          const st = slideTrails[i];
+          st.update(dt);
+          if (!st.done) st.draw(ctx);
+          if (st.done) slideTrails.splice(i, 1);
+        }
+
+        const n = effects.reduce((s, e) =>
+          s + e.emitters.reduce((k, em) => k + em.particles.length, 0), 0);
+        const tn = slideTrails.reduce((s, t) => s + t.stars.length, 0);
+        statsEl.textContent = `Effects: ${effects.length}  |  Particles: ${n}  |  Trails: ${slideTrails.length} (${tn}★)`;
+
+        requestAnimationFrame(loop);
+      }
+
+      /** 生成一次点击爆裂 */
+      function spawn(x, y) { effects.push(new TouchEffect(x, y)); }
+
+      canvas.addEventListener('pointerdown', e => {
+        spawn(e.clientX, e.clientY);
+
+        activeTrail = new SlideTrail({
+          /** 拖尾路径点在屏幕上存活时长，越大颜色拖尾越长 */
+          pointLife: 0.35,
+          /** 颜色拖尾头端宽度 */
+          ribbonWidth: 5.5,
+          /** 颜色拖尾整体透明度 */
+          ribbonAlpha: 0.75,
+          /** 颜色拖尾整体亮度倍数 */
+          ribbonBright: 1.0,
+          /** 颜色拖尾多层结构，含宽度倍数、透明度、模糊 */
+          ribbonLayers: [
+            { widthMul: 2.6, alpha: 0.35, blur: 6 },
+            { widthMul: 1.3, alpha: 0.70, blur: 1.5 },
+            { widthMul: 0.6, alpha: 1.00, blur: 0 },
+          ],
+          /** 颜色拖尾渐变色，t 为从头到尾的比例 */
+          ribbonColors: [
+            { t: 0.00, color: 'rgba(180, 140, 255, 0.00)' },
+            { t: 0.10, color: 'rgba(200, 160, 255, 0.30)' },
+            { t: 0.30, color: 'rgba(230, 150, 255, 0.70)' },
+            { t: 0.55, color: 'rgba(255, 130, 240, 0.95)' },
+            { t: 0.78, color: 'rgba(255, 180, 220, 1.00)' },
+            { t: 0.92, color: 'rgba(255, 230, 180, 1.00)' },
+            { t: 1.00, color: 'rgba(255, 250, 220, 1.00)' },
+          ],
+
+          /** 按住不动时每秒撒星星的间隔 */
+          starInterval: 0.05,
+          /** 移动时相邻星星的像素间距，越小越密 */
+          starSpacing: 30,
+          /** 星星最短寿命 */
+          starLifeMin: 0.5,
+          /** 星星最长寿命 */
+          starLifeMax: 0.55,
+          /** 星星最小尺寸 */
+          starSizeMin: 40,
+          /** 星星最大尺寸 */
+          starSizeMax: 60,
+          /** 星星初速度下限 */
+          starSpeedMin: 0,
+          /** 星星初速度上限，越大越飘 */
+          starSpeedMax: 2,
+          /** 星星速度阻尼，越大越快停下 */
+          starDrag: 6,
+
+          /** 星星淡出起点比例 */
+          starFadeStart: 0.55,
+          /** 星星淡出终点比例 */
+          starFadeEnd: 1.00,
+          /** 星星满亮时的透明度 */
+          starBaseAlpha: 0.9,
+
+          sprite: SPRITES.spark2,
+          spriteFrames: SPRITES.spark2_frames,
+          starColors: [
+            'rgba(93, 150, 254, 1.0)',
+            'rgba(76, 240, 203, 1.0)',
+            'rgba(160, 235, 100, 1.0)',
+            'rgba(230, 240, 160, 1.0)',
+            'rgba(255, 170, 220, 1.0)',
+          ],
+        });
+        activeTrail.start(e.clientX, e.clientY);
+        slideTrails.push(activeTrail);
+      });
+
+      canvas.addEventListener('pointermove', e => {
+        if (!activeTrail) return;
+        activeTrail.push(e.clientX, e.clientY);
+      });
+
+      canvas.addEventListener('pointerup', () => {
+        if (activeTrail) { activeTrail.end(); activeTrail = null; }
+      });
+      canvas.addEventListener('pointercancel', () => {
+        if (activeTrail) { activeTrail.end(); activeTrail = null; }
+      });
+      canvas.addEventListener('pointerleave', () => {
+        if (activeTrail) { activeTrail.end(); activeTrail = null; }
+      });
+
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+
+</html>
