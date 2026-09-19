@@ -2,8 +2,9 @@
 
 废弃旧文档
 
-一个基于 Canvas 的网页鼠标特效库，提供鼠标点击、长按、移动粒子、主题光标和笔画拖尾效果。
 
+一个基于 Canvas 的网页鼠标特效库，提供鼠标点击、长按、移动粒子、主题光标和拖尾效果。
+<!-- 
 项目的图片资源以独立文件形式发布，不会转换为 Base64。安装 npm 包后，主题图片位于包内的 `dist/assets` 目录，并由构建后的 JavaScript 文件自动加载。
 
 ## 目录
@@ -695,4 +696,4 @@ const cursor = await initStellaSoraCursor({
 
 ## License
 
-MIT
+MIT -->
