@@ -1,7 +1,8 @@
 {
   "name": "@makostar/ss-cursor",
-  "version": "1.0.3",
+  "version": "1.1.1",
   "description": "stella cursor touch effect",
+  "type": "module",
   "main": "dist/index.cjs.js",
   "module": "dist/index.esm.js",
   "types": "dist/index.d.ts",
@@ -10,9 +11,9 @@
   "jsdelivr": "dist/index.umd.min.js",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.esm.js",
-      "require": "./dist/index.cjs.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.cjs.js"
     },
     "./dist/index.esm.js": "./dist/index.esm.js",
     "./dist/index.esm.min.js": "./dist/index.esm.min.js",
@@ -24,17 +25,15 @@
   "files": [
     "dist"
   ],
+  "sideEffects": false,
   "scripts": {
-    "build": "tsx scripts/clean-dist-maps.ts && rollup -c && npm run copy-assets",
-    "copy-assets": "tsx scripts/copy-assets.ts",
-    "dev": "rollup -c && npm run copy-assets && rollup -c -w",
-    "serve": "npx serve . -l 3000",
-    "start": "npm run build && npm run serve",
-    "prepublishOnly": "npm run build"
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "serve": "npx --yes serve . -l 3000",
+    "start": "pnpm run build && pnpm run serve",
+    "prepublishOnly": "pnpm run build"
   },
-  "keywords": [
-    "ss-cursor"
-  ],
+  "keywords": ["ss-cursor"],
   "license": "MIT",
   "publishConfig": {
     "access": "public"
@@ -48,6 +47,5 @@
     "tslib": "^2.8.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
-  },
-  "sideEffects": false
+  }
 }

@@ -1,19 +1,15 @@
-import { cp, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 
-/** 复制源码图片到构建产物 */
-async function copyAssets() {
-  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const source = join(projectRoot, 'assets');
-  const destination = join(projectRoot, 'dist', 'assets');
+const SRC = 'assets';
+const DST = 'dist/assets';
 
-  await mkdir(destination, { recursive: true });
-  await cp(source, destination, { recursive: true });
-  console.log('Copied assets to dist/assets');
+if (!existsSync(SRC)) {
+  console.warn(`[copy-assets] source directory no found: ${SRC}/ (skipping)`);
+  process.exit(0);
 }
 
-copyAssets().catch((error: unknown) => {
-  console.error('Failed to copy assets:', error);
-  process.exitCode = 1;
-});
+if (existsSync(DST)) rmSync(DST, { recursive: true, force: true });
+mkdirSync(DST, { recursive: true });
+cpSync(SRC, DST, { recursive: true });
+
+console.log(`[copy-assets] ${SRC}/ -> ${DST}/`);

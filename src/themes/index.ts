@@ -1,28 +1,49 @@
-import type { LoadedThemeAssets, ThemeAssets } from '../types';
-import { getThemeByDate } from '../utils';
+import type { ThemeAssets, LoadedThemeAssets } from '../types';
 import { loadThemeAssets } from '../loader';
-import { christmasTheme } from './christmas';
+import { logWarn, logTips } from '../log';
+
 import { defaultTheme } from './default';
-import { newYearTheme } from './new-year';
-import { summerTheme } from './summer';
+import { christmas } from './christmas';
+import { newyear } from './newyear';
+import { summer } from './summer';
 
-/** 内置主题列表 */
-const themes: ThemeAssets[] = [defaultTheme, christmasTheme, newYearTheme, summerTheme];
+/** 内置主题注册表 */
+export const BUILTIN_THEMES: ThemeAssets[] = [
+  defaultTheme,
+  christmas,
+  newyear,
+  summer,
+];
 
-/** 解析并加载主题 */
+/** 按名称解析主题并加载贴图 */
 export async function resolveTheme(
-  themeName?: string,
+  name: string | undefined,
   customThemes: ThemeAssets[] = [],
 ): Promise<LoadedThemeAssets> {
-  /** 合并内置主题和运行时主题 */
-  const availableThemes = [...themes, ...customThemes];
-  /** 计算本次初始化使用的主题名称 */
-  const selectedName = themeName === 'random'
-    ? availableThemes[Math.floor(Math.random() * availableThemes.length)].name
-    : themeName === 'auto' || !themeName
-      ? getThemeByDate()
-      : themeName;
-  /** 查找主题并回退到默认主题 */
-  const theme = availableThemes.find(({ name }) => name === selectedName);
-  return loadThemeAssets(theme ?? defaultTheme);
+  const all = [...customThemes, ...BUILTIN_THEMES];
+  const key = name ?? 'auto';
+
+  let picked: ThemeAssets;
+  if (key === 'auto') {
+    picked = all.find(t => t.matchDate?.()) ?? defaultTheme;
+    logTips(`auto -> ${picked.name}`);
+  } else if (key === 'random') {
+    picked = all[Math.floor(Math.random() * all.length)] ?? defaultTheme;
+    logTips(`random -> ${picked.name}`);
+  } else {
+    const found = all.find(t => t.name === key);
+    if (!found) {
+      logWarn(`unknown theme key: "${key}",`
+        + `fallback to default -- ` +
+        `[${BUILTIN_THEMES.map(t => t.name).toString()}]`
+      );
+      picked = defaultTheme;
+    } else {
+      picked = found;
+    }
+  }
+
+  return loadThemeAssets(picked);
 }
+
+export { defaultTheme, christmas, newyear, summer };

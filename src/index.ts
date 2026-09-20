@@ -1,29 +1,45 @@
-import type { StellaSoraCursorOptions, ThemeAssets } from './types';
+import type { StellaSoraCursorOptions } from './types';
 import { resolveConfig } from './config';
 import { resolveTheme } from './themes';
-import { Renderer } from './render';
+import { Renderer } from './renderer';
+import { setSilent, logInit, logDestroy, logError, logWarn } from './log';
 
-export type { StellaSoraCursorOptions, ThemeAssets } from './types';
+export type {
+  StellaSoraCursorOptions,
+  ThemeAssets,
+  LoadedThemeAssets,
+} from './types';
+
+/** 当前活动实例的计数 */
+let activeCount = 0;
 
 /** 异步初始化光标效果 */
 export async function initStellaSoraCursor(
   options?: StellaSoraCursorOptions,
 ): Promise<{ destroy: () => void }> {
   const config = resolveConfig(options);
-  const assets = await resolveTheme(options?.theme, options?.customThemes);
-  const renderer = new Renderer(config, assets);
-  return { destroy: () => renderer.destroy() };
-}
+  setSilent(config.silent);
 
-/** 同步返回销毁句柄并异步初始化 */
-export function initStellaSoraCursorSync(
-  options?: StellaSoraCursorOptions,
-): { destroy: () => void } {
-  const config = resolveConfig(options);
-  let renderer: Renderer | null = null;
-  let destroyed = false;
-  resolveTheme(options?.theme, options?.customThemes).then(a => {
-    if (!destroyed) renderer = new Renderer(config, a);
-  });
-  return { destroy: () => { destroyed = true; renderer?.destroy(); } };
+  if (activeCount > 0) {
+    logWarn(`already ${activeCount} active instance(s) on this page`);
+  }
+
+  let theme;
+  try {
+    theme = await resolveTheme(options?.theme, options?.customThemes);
+  } catch (err) {
+    logError('theme load failed', err);
+    throw err;
+  }
+
+  const renderer = new Renderer(config, theme);
+  activeCount++;
+
+  return {
+    destroy: () => {
+      renderer.destroy();
+      activeCount = Math.max(0, activeCount - 1);
+      logDestroy();
+    },
+  };
 }

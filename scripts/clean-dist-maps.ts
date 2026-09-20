@@ -1,21 +1,15 @@
-import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 
-/** 删除旧构建遗留的 source map */
-async function cleanDistMaps() {
-  const projectRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-  await Promise.all([
-    rm(join(projectRoot, 'dist', 'index.esm.js.map'), { force: true }),
-    rm(join(projectRoot, 'dist', 'index.cjs.js.map'), { force: true }),
-    rm(join(projectRoot, 'dist', 'index.umd.js.map'), { force: true }),
-    rm(join(projectRoot, 'dist', 'index.esm.min.js.map'), { force: true }),
-    rm(join(projectRoot, 'dist', 'index.cjs.min.js.map'), { force: true }),
-    rm(join(projectRoot, 'dist', 'index.umd.min.js.map'), { force: true }),
-  ]);
+const SRC = 'assets';
+const DST = 'dist/assets';
+
+if (!existsSync(SRC)) {
+  console.warn(`[copy-assets] 找不到源目录 ${SRC}/，跳过`);
+  process.exit(0);
 }
 
-cleanDistMaps().catch((error: unknown) => {
-  console.error('Failed to clean dist source maps:', error);
-  process.exitCode = 1;
-});
+if (existsSync(DST)) rmSync(DST, { recursive: true, force: true });
+mkdirSync(DST, { recursive: true });
+cpSync(SRC, DST, { recursive: true });
+
+console.log(`[copy-assets] ${SRC}/ → ${DST}/`);
