@@ -1,6 +1,6 @@
 # @makostar/ss-cursor
 
-一个星塔旅人（Stella Sora）主题的光标与点击特效库，基于 Canvas 实现。提供点击特效、拖动拖尾、主题光标，内置 4 套主题。
+一个星塔旅人主题的光标与点击特效库，基于 Canvas 实现。提供点击特效、拖动拖尾、主题光标，内置 4 套主题。
 
 ## 安装
 
@@ -195,5 +195,5 @@ dist/
 **主题名拼错** -> 控制台会打 `unknown theme "xxx", fallback to default`，按提示改。
 
 ## License
-
 MIT
+> 仅供学习交流，图像与数据版权归原游戏及数据提供方所有。
