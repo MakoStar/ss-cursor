@@ -6,7 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StellaSora Cursor Demo</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
     body {
       min-height: 100vh;
       background: linear-gradient(135deg, #1a1a2e, #16213e);
@@ -17,6 +22,7 @@
       justify-content: center;
       text-align: center;
     }
+
     .btn {
       padding: 12px 24px;
       border: none;
@@ -28,8 +34,14 @@
       font-size: 1rem;
       transition: background 0.15s;
     }
-    .btn:hover { background: rgba(255, 255, 255, 0.2); }
-    .btn.active { background: rgba(120, 180, 255, 0.3); }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn.active {
+      background: rgba(120, 180, 255, 0.3);
+    }
   </style>
 </head>
 
@@ -43,32 +55,162 @@
     <button class="btn" onclick="switchTo('summer')">Summer 主题</button>
     <button class="btn" onclick="switchTo('random')">随机主题</button>
     <button class="btn" onclick="switchTo('auto')">自动(按日期)</button>
+    <button class="btn" onclick="switchTest('test')">测试</button>
   </div>
 
   <script type="module">
     import { initStellaSoraCursor } from '../dist/index.esm.min.js';
+    import { Emitter, SlideTrail, TouchEffect, TAU, sampleCurve  } from '../dist/index.esm.min.js';
 
     let cursor = null;
+
+    const customTheme = {
+      name: 'test',
+      label: 'Test',
+      spriteFiles: {
+        ringMid: './assets/ring_mid.png',
+        burst: './assets/burst.png',
+        core: './assets/core.png',
+        sparkle: './assets/sparkle.png',
+      },
+      createEmitters(S) {
+        const out = [];
+        out.push(new Emitter({
+          sprite: S.ringMid,
+          startDelay: 0.05,
+          lifeMin: 0.5, lifeMax: 0.5,
+          speedMin: 0, speedMax: 0,
+          sizeMin: 10, sizeMax: 10,
+          burstCount: 1,
+          sizeCurve: t => sampleCurve([
+            [0.000, 0.000], [0.159, 0.873], [1.000, 1.000],
+          ], t),
+          alphaCurve: t => sampleCurve([
+            [0.000, 1.000], [0.316, 1.000], [0.506, 0.282], [1.000, 0.000],
+          ], t),
+        }));
+
+        out.push(new Emitter({
+          sprite: S.core,
+          frameCount: 1,
+          startDelay: 0,
+          lifeMin: 0.6, lifeMax: 0.6,
+          speedMin: 0, speedMax: 0,
+          sizeMin: 12, sizeMax: 12,
+          burstCount: 1,
+          rotMin: -12, rotMax: 12,
+          rotSpeed: -10,
+          tint: 'rgba(196, 254, 255, 1)',
+          sizeCurve: t => t,
+          alphaCurve: t => sampleCurve([
+            [0.000, 0.000], [0.174, 1.000], [0.438, 1.000], [1.000, 0.000],
+          ], t),
+        }));
+
+        // out.push(new Emitter({
+        //   sprite: S.burst,
+        //   frameCount: 2,
+        //   tileX: 2, tileY: 2, frameStart: 0,
+        //   frameMode: 'fixed',
+        //   startDelay: 0.16,
+        //   lifeMin: 0.5, lifeMax: 0.8,
+        //   speedMin: 25, speedMax: 50,
+        //   sizeMin: 2, sizeMax: 8,
+        //   burstCount: 5,
+        //   shapeRadius: 3,
+        //   gravity: 2,
+        //   drag: 3,
+        //   rotMin: -Math.PI / 3, rotMax: Math.PI / 3,
+        //   sizeCurve: t => 1 - t * 0.49,
+        //   alphaCurve: t => {
+        //     if (t < 0.274) return 1 - t / 0.274 * 0.357;
+        //     if (t < 0.440) return 0.643 + (t - 0.274) / 0.166 * 0.141;
+        //     if (t < 0.586) return 0.784 - (t - 0.440) / 0.146 * 0.157;
+        //     if (t < 0.745) return 0.627 - (t - 0.586) / 0.159 * 0.227;
+        //     return 0.400 - (t - 0.745) / 0.255 * 0.400;
+        //   },
+        // }));
+
+        return out;
+      },
+      createTrail(S) {
+        return new SlideTrail({
+          maxPoints: 240,
+          minDist: 3,
+          pointLife: 0.35,
+          activationDelay: 0.12,
+          ribbonWidth: 5.0,
+          ribbonAlpha: 0.75,
+          ribbonBright: 1.0,
+          ribbonLayers: [
+            { widthMul: 2.6, alpha: 0.35, blur: 6 },
+            { widthMul: 1.3, alpha: 0.70, blur: 1.5 },
+            { widthMul: 0.6, alpha: 1.00, blur: 0 },
+          ],
+          // rgba(255, 85, 115, 0)
+          ribbonColors: [
+            { t: 0.00, color: 'rgba(255, 85, 115, 0)' },
+            { t: 0.15, color: 'rgba(255, 85, 115, 0.6)' },
+            { t: 0.55, color: 'rgba(180, 89, 60, 0.75)' },
+            { t: 0.85, color: 'rgba(258, 38, 0, 0.8)' },
+            { t: 1.00, color: 'rgba(258, 38, 0, 1.0)' },
+          ],
+          // sprite: S.burst,
+          sprite: S.core,
+          // spriteFrames: 1,
+          // spriteTileX: 2, spriteTileY: 2, spriteFrameStart: 0,
+          // frameMode: 'fixed',
+          // fixedFrameWeights: [
+          //   [0, 0.4], [1, 0.4], [2, 0.1], [3, 0.1],
+          // ],
+          ribbonOnTop: true,
+          starInterval: 0.06,
+          starSpacing: 60,
+          starLifeMin: 0.5, starLifeMax: 0.8,
+          starSizeMin: 35, starSizeMax: 45,
+          starSpeedMin: 0, starSpeedMax: 0,
+          starDrag: 6,
+          starJitter: 0,
+          starRotMin: 0, starRotMax: TAU,
+          starRotSpeedMin: 0, starRotSpeedMax: 0,
+          starShrink: 0.75,
+          starFadeStart: 0.55, starFadeEnd: 1.00,
+          starBaseAlpha: 0.9,
+          starColors: [],
+        });
+      },
+      cursorImage: '../assets/cursor.png',
+      cursorPointerImage: '../assets/cursor-pointer.png',
+    };
+
+    async function amber() {
+      cursor?.destroy();
+      cursor = await initStellaSoraCursor({
+        theme: 'test',
+        customThemes: [customTheme],
+      });
+    }
 
     /** 切换主题：销毁旧实例，创建新实例 */
     async function init(theme) {
       cursor?.destroy();
       cursor = await initStellaSoraCursor(
-        theme === 'auto' ? {} : { theme,holdDelay:10000000000000000000000000000 }
+        theme === 'auto' ? {} : { theme }
       );
 
       /** 刷新按钮高亮 */
       for (const btn of document.querySelectorAll('.btn')) {
         btn.classList.toggle('active', btn.textContent.includes(
           theme === 'auto' ? '自动' :
-          theme === 'random' ? '随机' :
-          theme === 'newyear' ? 'New Year' :
-          theme.charAt(0).toUpperCase() + theme.slice(1)
+            theme === 'random' ? '随机' :
+              theme === 'newyear' ? 'New Year' :
+                theme.charAt(0).toUpperCase() + theme.slice(1)
         ));
       }
     }
 
     window.switchTo = init;
+    window.switchTest = amber;
     init('random');
   </script>
 </body>
