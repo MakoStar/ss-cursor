@@ -94,8 +94,11 @@ export class Renderer {
 
   private resize() {
     this.DPR = Math.min(window.devicePixelRatio || 1, 2);
-    this.W = window.innerWidth;
-    this.H = window.innerHeight;
+    // this.W = window.innerWidth;
+    // this.H = window.innerHeight;
+    /** Fix: 点击特效位置左上偏移 20260921 */
+    this.W = document.documentElement.clientWidth;
+    this.H = document.documentElement.clientHeight;
     this.canvas.width = this.W * this.DPR;
     this.canvas.height = this.H * this.DPR;
     this.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
